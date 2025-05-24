@@ -9,6 +9,8 @@ from torch.utils.data.dataset import Subset
 from torch.utils.data import DataLoader
 from eegMamba import EEGMamba
 from model import Classifier
+from debug_utils import (enable_debug, disable_debug, debug_print, 
+                        check_gradients, debug_step, debug_summary, timing)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -23,7 +25,18 @@ def topk_accuracy(logits, labels, k=5):
     accuracy = topk_correct.float().mean().item()
     return accuracy
 
+@timing("training_run")
 def run(args):
+    # Enable debugging
+    debug_mode = getattr(args, 'debug_mode', True)
+    save_debug_tensors = getattr(args, 'save_debug_tensors', False)
+    
+    if debug_mode:
+        enable_debug(save_tensors=save_debug_tensors)
+        debug_print("=== EEGMamba Training Started ===", 'blue')
+        debug_print(f"Device: {device}", 'cyan')
+    else:
+        disable_debug()
 
     from utils.reproducibility import seed_worker
     # NOTE: We do need it (IMHO).
@@ -109,6 +122,7 @@ def run(args):
     pbar = tqdm(range(args.epochs))
     for epoch in pbar:
         pbar.set_description("training {}/{} epoch".format(epoch, args.epochs))
+        debug_print(f"=== Epoch {epoch}/{args.epochs} ===", 'magenta')
 
         model.train()
         pbar2 = tqdm(train_loader)
@@ -146,7 +160,13 @@ def run(args):
 
             optimizer.zero_grad()
             loss.backward()
+            
+            # Check gradients every 10 steps
+            if debug_mode and i % 10 == 0:
+                grad_norms = check_gradients(model)
+            
             optimizer.step()
+            debug_step()
 
         model.eval()
         pbar3 = tqdm(test_loader)
@@ -205,6 +225,11 @@ def run(args):
             torch.save(model.state_dict(), best_weight_file)
             best_acc =  np.mean(testTop10accs)
             print('best model is updated !!, {}'.format(best_acc), best_weight_file)
+            debug_print(f"New best accuracy: {best_acc:.4f}", 'green')
+    
+    # Print debug summary at the end
+    if debug_mode:
+        debug_summary()
 
 if __name__ == "__main__":
     from hydra import initialize, compose

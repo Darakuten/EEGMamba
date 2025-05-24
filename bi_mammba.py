@@ -5,6 +5,7 @@ from torch import Tensor
 from mamba.mamba_ssm import Mamba
 from mamba.mamba_ssm.ops.selective_scan_interface import selective_scan_fn
 from einops import rearrange
+from debug_utils import debug_tensor, debug_print, timing
 
 
 # パラメータを順方向と逆方向で共有しない。
@@ -13,6 +14,7 @@ class BidirectionalMamba(Mamba):  # Mambaを継承
         super().__init__(*args, **kwargs)  # Mambaの初期化を再利用
         self.norm = nn.LayerNorm(self.d_model, device=self.out_proj.weight.device)  # LayerNorm追加
 
+    @timing("bidirectional_mamba_forward")
     def forward(self, hidden_states, inference_params=None):
         """
         Bidirectional Mambaのフォワードパス
@@ -20,8 +22,9 @@ class BidirectionalMamba(Mamba):  # Mambaを継承
         """
         batch, seqlen, dim = hidden_states.shape
 
-        #print("hidden_states: ", hidden_states.shape)
+        debug_tensor(hidden_states, "bidirectional_mamba_input")
         hidden_states = self.norm(hidden_states)  # LayerNorm適用
+        debug_tensor(hidden_states, "bidirectional_mamba_normalized")
 
         # キャッシュされた状態を取得
         conv_state_f, conv_state_b, ssm_state_f, ssm_state_b = None, None, None, None
@@ -46,21 +49,26 @@ class BidirectionalMamba(Mamba):  # Mambaを継承
 
         # **Forward方向**
         y_f = self._mamba_pass(x, conv_state_f, ssm_state_f, seqlen)
+        debug_tensor(y_f, "mamba_forward_output")
 
         # **Backward方向**
         x_b = x.flip(dims=(-1,))
         y_b = self._mamba_pass(x_b, conv_state_b, ssm_state_b, seqlen)
         y_b = y_b.flip(dims=(-1,))  # 再び元の順番に戻す
-
-        # print("y_f: ", y_f.shape)
-        # print("y_b: ", y_b.shape)
+        debug_tensor(y_b, "mamba_backward_output")
 
         # 結果の合成
         y = (y_f + y_b) * F.silu(z)
+        debug_tensor(y, "mamba_combined_output")
+        
         y = rearrange(y, "b d l -> b l d")
         out = self.out_proj(y)
+        debug_tensor(out, "mamba_projected_output")
 
-        return out + hidden_states
+        residual_out = out + hidden_states
+        debug_tensor(residual_out, "mamba_residual_output")
+        
+        return residual_out
 
     def _mamba_pass(self, x, conv_state, ssm_state, seqlen):
         """Mambaの処理を共通化（順方向/逆方向の違いを吸収）"""
