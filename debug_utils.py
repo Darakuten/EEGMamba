@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import time
+import math
 from functools import wraps
 import os
 from termcolor import colored
@@ -96,8 +97,12 @@ class EEGMambaDebugger:
                 else:
                     self.debug_print(f"Normal gradient: {name} = {grad_norm:.6f}", 'green')
         
-        total_grad_norm = torch.sqrt(sum(g**2 for g in grad_norms.values()))
-        self.debug_print(f"Total gradient norm: {total_grad_norm:.6f}", 'cyan')
+        if grad_norms:
+            total = sum(g ** 2 for g in grad_norms.values())
+            total_grad_norm = math.sqrt(total)
+            self.debug_print(f"Total gradient norm: {total_grad_norm:.6f}", 'cyan')
+        else:
+            self.debug_print("No gradients found for computation", 'yellow')
         
         return grad_norms
     
